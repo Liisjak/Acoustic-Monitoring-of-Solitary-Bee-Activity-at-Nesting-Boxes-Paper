@@ -1,4 +1,4 @@
-# Code and data for "Acoustic monitoring of solitary bee activity at nesting boxes" submission
+# Data and code for "Acoustic monitoring of solitary bee activity at nesting boxes" paper: 
 
 ## Data
 
