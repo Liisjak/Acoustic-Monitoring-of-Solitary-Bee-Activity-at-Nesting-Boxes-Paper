@@ -1,0 +1,219 @@
+def gnezdilnice_spectrogram_and_timeseries_databuilder(fmin=50, fmax=950, spec_dim=128, timeseries_sr=2000, timeseries=False):
+    DATA = os.path.join('recordings')
+
+    all_data_spectrograms = {
+                    'data': [],
+                    'label': [],
+                    'buzz_type': [],
+                    'wav': [],
+                    'segment':[],
+                    'location': [],
+                   }
+    if timeseries:
+        all_data_timeseries = {
+                        'data': [],
+                        'label': [],
+                        'buzz_type': [],
+                        'wav': [],
+                        'segment':[],
+                        'location': [],
+                       }
+    
+    # read the corrections file
+    CORRECTIONS = os.path.join(DATA, 'gnezdilnice_manual_corrections.xlsx')
+    corrections = pd.read_excel(CORRECTIONS)
+    corrections_wrong = corrections.wrong.dropna().values
+    corrections_edge = corrections.edge.dropna().values
+    corrections_discard = corrections.discard.dropna().values
+    corrections_notfaint = corrections.not_faint.dropna().values
+
+    nobuzz_to_buzz_ratio = 9/3
+    print(f'Creating spectrogram dataset from recordings in directory {DATA}:')
+    print(f'Minimum frequency cutoff set to {fmin} Hz')
+    print(f'Maxmium frequency cutoff set to {fmax} Hz')
+    spec_len = 4 # seconds
+    spec_frames = spec_dim # dimension
+    desired_frame_rate = spec_frames / spec_len  # 128 frames for every 4 seconds
+    overlap_len = 2 # seconds
+    overlap_frames = int((overlap_len / spec_len)*spec_frames)
+    final_sr = timeseries_sr # Hz
+    print('Processing')
+    for label_pair in label_pairs:
+        # extract info from the array
+        LABEL = label_pair[0]
+        REC = label_pair[1]
+        nobuzz_total = label_pair[2]
+        buzz_total = label_pair[3]
+        nobuzz_chance = (buzz_total*nobuzz_to_buzz_ratio)/(nobuzz_total+buzz_total)
+        print(f'Analyzing pair files "{os.path.basename(LABEL)}" and "{os.path.basename(REC)}"')
+        # read the signal
+        y, sr = librosa.load(REC, sr=16000, mono=True)
+        # compute mel power spectrogram
+        desired_frames = int(desired_frame_rate * len(y) / sr)
+        hop_length = len(y) // desired_frames
+        mel_spectrogram = librosa.feature.melspectrogram(y=y, 
+                                                     sr=sr, 
+                                                     n_fft=hop_length*4, 
+                                                     hop_length=hop_length, 
+                                                     n_mels=spec_frames,
+                                                     fmin=fmin, 
+                                                     fmax=fmax
+                                                        )
+        # convert to dB scale
+        mel_spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
+        if timeseries:
+            # resample the timeseries 
+            y_resamp = librosa.resample(y=y, orig_sr=sr, target_sr=final_sr, fix=True)
+        # read the labels and create buzz and observed intervals
+        df = pd.read_csv(LABEL, header=None, names=['Time', 'Label'])
+        df = df.replace({'New Point': 'normal', 'New Point_long': 'normal_long'})
+        buzz_intervals = []
+        buzz_types = []
+        times = df[(df['Label']!='start') & (df['Label']!='stop')]['Time'].values
+        types = df[(df['Label']!='start') & (df['Label']!='stop')]['Label'].values
+        if len(times)%2!=0:
+            raise Exception("Number of timestamps is not an even number") 
+        for i, (tim, typ) in enumerate(zip(times, types)):
+            if i%2!=0: continue # skip every second entry
+            buzz_intervals.append([int(times[i]*final_sr), int(times[i+1]*final_sr)])
+            buzz_types.append(typ)
+        observed_intervals = []
+        observed = df[(df['Label']=='start') | (df['Label']=='stop')]['Time'].values
+        for i, tim in enumerate(observed):
+            if i%2!=0: continue
+            observed_intervals.append([int(observed[i]*final_sr), int(observed[i+1]*final_sr)])
+        # determine the REC location
+        location = 'unknown' # annonimization to prevent errors
+        # split into smaller segments with overlap
+        start_time = -overlap_len*final_sr
+        end_time = overlap_len*final_sr
+        start_frame = -overlap_frames
+        end_frame = overlap_frames
+        spectrogram_index = -1
+        nobuzz_counter = 0
+        buzz_counter = 0
+        counters = [0, 0]
+        spectrogram_indices = []
+        while end_frame <= mel_spectrogram_db.shape[1]:
+            start_time = start_time + overlap_len*final_sr
+            end_time = end_time + overlap_len*final_sr
+            start_frame = start_frame + overlap_frames
+            end_frame = end_frame + overlap_frames
+            spectrogram_index = spectrogram_index + 1
+            # check if spectrogram falls into observed interval
+            for i, observed_interval in enumerate(observed_intervals):
+                if (observed_interval[0] <= start_time <= observed_interval[1]) and (observed_interval[0] <= end_time <= observed_interval[1]):
+                    in_observed = True
+                    break
+                else:
+                    in_observed = False
+            if not in_observed:
+                continue
+            # check if spectrogram overlaps with buzz interval
+            for i, buzz_interval in enumerate(buzz_intervals):
+                if (start_time <= buzz_interval[0] <= end_time) or (start_time <= buzz_interval[1] <= end_time) or \
+                    (buzz_interval[0] <= start_time <= buzz_interval[1]) or (buzz_interval[0] <= end_time <= buzz_interval[1]):
+                    label = 1
+                    buzz_type = buzz_types[i]
+                    buzz_counter += 1
+                    break
+                else:
+                    label = 0
+                    buzz_type = None
+            if label == 1:
+                counters[1] = counters[1] + 1
+            else:
+                counters[0] = counters[0] + 1
+            if label == 0:
+                r = random.Random(spectrogram_index).uniform(0, 1)
+                if r >= nobuzz_chance:
+                    continue
+                nobuzz_counter +=1
+            # filter the segments and correct properties
+            corrections_identifier = f'{REC}+{spectrogram_index}'
+            # skip edge and discarded segments
+            if corrections_identifier in corrections_edge:
+                #print('EDGE:', corrections_identifier)
+                continue
+            if corrections_identifier in corrections_discard:
+                #print('DISCARD:', corrections_identifier)
+                continue
+            if corrections_identifier in corrections_wrong:
+                #print('WRONG:', corrections_identifier)
+                label = 1 - label # flip 0 to 1 and 1 to 0
+            if corrections_identifier in corrections_notfaint:
+                #print('NOT FAINT:', corrections_identifier)
+                buzz_type = 'normal'
+            spectrogram_indices.append(spectrogram_index)
+            # spectrogram segment
+            spec = mel_spectrogram_db[:, start_frame:end_frame]
+            if timeseries:
+                # audio segment
+                y_seg = y_resamp[start_time : end_time]
+                nyquist_freq = 0.5 * final_sr
+                low = fmin / nyquist_freq
+                high = fmax / nyquist_freq
+                b, a = signal.butter(4, [low, high], btype='band')
+                y_seg = signal.lfilter(b, a, y_seg)       
+                if len(y_seg) < spec_len*final_sr: # this is here from "cmrlji_databuilder", not sure if it is actually needed here
+                    num_zeros_to_pad = spec_len*final_sr - len(y_seg)
+                    y_seg = np.concatenate((y_seg, np.zeros(num_zeros_to_pad)))
+            # spectrograms
+            all_data_spectrograms['data'].append(spec)
+            all_data_spectrograms['label'].append(label)
+            all_data_spectrograms['buzz_type'].append(buzz_type)
+            all_data_spectrograms['wav'].append(REC)
+            all_data_spectrograms['segment'].append(spectrogram_index)
+            all_data_spectrograms['location'].append(location)
+            if timeseries:
+                # timeseries
+                all_data_timeseries['data'].append(y_seg)
+                all_data_timeseries['label'].append(label)
+                all_data_timeseries['buzz_type'].append(buzz_type)
+                all_data_timeseries['wav'].append(REC)
+                all_data_timeseries['segment'].append(spectrogram_index)
+                all_data_timeseries['location'].append(location)
+            
+        #print(spectrogram_indices)
+        print(f'\tSelected "Nobuzz" to "buzz" ratio = {nobuzz_counter} : {buzz_counter} ({np.round((nobuzz_counter/(nobuzz_counter+buzz_counter))*100, 1)} : {np.round((buzz_counter/(nobuzz_counter+buzz_counter))*100, 1)}%)')
+        print(f'\tRecording "Nobuzz" to "buzz" ratio = {counters[0]} : {counters[1]} ({np.round((counters[0]/(counters[0]+counters[1]))*100, 1)} : {np.round((counters[1]/(counters[0]+counters[1]))*100, 1)}%)')
+                
+    # normalize the spectrograms with mean and sd
+    print('Normalizing the spectrograms')
+    data_mean = np.mean(np.concatenate(all_data_spectrograms['data']))
+    data_std = np.std(np.concatenate(all_data_spectrograms['data']))
+    print(f'\tData mean: {data_mean}')
+    print(f'\tData std: {data_std}')
+    all_data_spectrograms['data'] = (all_data_spectrograms['data']-data_mean)/data_std
+    if timeseries:
+        # normalize the timeseries with mean and sd
+        print('Normalizing the timeseries')
+        data_mean = np.mean(all_data_timeseries['data'])
+        data_std = np.std(all_data_timeseries['data'])
+        print(f'\tData mean: {data_mean}')
+        print(f'\tData std: {data_std}')
+        all_data_timeseries['data'] = (all_data_timeseries['data']-data_mean)/data_std
+
+    print(f'Spectrogram data shape:', all_data_spectrograms['data'].shape)
+    if timeseries:
+        print(f'Timeseries data shape:', all_data_timeseries['data'].shape)
+    
+    # save the spectrograms dataset
+    DATASET = os.path.join('data', f'gnezdilnice_spectrograms_{fmin}-{fmax}_{spec_frames}.dat')
+    bytes = io.BytesIO()
+    pickle.dump(all_data_spectrograms, bytes)
+    zbytes = zlib.compress(bytes.getbuffer())
+    with open(DATASET, 'wb') as fd:
+        fd.write(zbytes)
+    print(f'Dataset has been saved to {DATASET}')
+    if timeseries:
+        # save the timeseries dataset
+        DATASET = os.path.join('data', f'gnezdilnice_timeseries_{fmin}-{fmax}_{final_sr}.dat')
+        bytes = io.BytesIO()
+        pickle.dump(all_data_timeseries, bytes)
+        zbytes = zlib.compress(bytes.getbuffer())
+        with open(DATASET, 'wb') as fd:
+            fd.write(zbytes)
+        print(f'Dataset has been saved to {DATASET}')
+        print()
+    return
