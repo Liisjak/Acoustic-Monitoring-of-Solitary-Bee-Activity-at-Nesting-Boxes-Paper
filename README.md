@@ -12,7 +12,7 @@ Scripts are written in Python (```.py```) version ```Python 3.8.16```. Dependenc
 
 To reproduce the results in the paper, run the ```gnezdilnice.ipynb``` Jupyter Notebook file. A folder ```results``` will be created where all of the results files will be saved.
 
-The versions of the libraries/dependecies we used are listed in ```requirements.txt```
+The versions of the libraries/dependecies used are listed in ```requirements.txt```
 
 ## License
 
