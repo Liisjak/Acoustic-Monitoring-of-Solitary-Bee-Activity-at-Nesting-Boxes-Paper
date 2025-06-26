@@ -18,3 +18,8 @@ The versions of the libraries/dependecies we used are listed in ```requirements.
 
 - Code is licensed under the [MIT License](LICENSE).  
 - Data is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](data/LICENSE-CC-BY-4.0)
+
+## Citing this work
+
+If you use this data and/or code in your work, please cite the accompanying paper:
+
