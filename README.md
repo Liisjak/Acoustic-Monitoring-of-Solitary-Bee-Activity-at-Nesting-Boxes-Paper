@@ -21,5 +21,7 @@ The versions of the libraries/dependecies used are listed in ```requirements.txt
 
 ## Citing this work
 
+Zenodo DOI: [![DOI](https://zenodo.org/badge/1008957235.svg)](https://doi.org/10.5281/zenodo.15746131)
+
 If you use this data and/or code in your work, please cite the accompanying paper:
 
