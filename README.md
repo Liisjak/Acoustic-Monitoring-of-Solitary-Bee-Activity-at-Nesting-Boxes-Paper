@@ -17,4 +17,4 @@ The versions of the libraries/dependecies we used are listed in ```requirements.
 ## License
 
 - Code is licensed under the [MIT License](LICENSE).  
-- Data is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](LICENSE-DATA.txt)
+- Data is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](data/LICENSE-CC-BY-4.0)
